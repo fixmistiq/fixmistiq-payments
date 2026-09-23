@@ -1,4 +1,5 @@
 import os
+import base64
 import hmac
 import hashlib
 from fastapi import FastAPI, Request, HTTPException
@@ -47,27 +48,59 @@ async def create_checkout(req: CreateOrderRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def verify_webhook(body: bytes, headers: dict, secret: str) -> bool:
+    """Verify Dodo (Standard Webhooks) signature."""
+    msg_id = headers.get("webhook-id", "")
+    msg_timestamp = headers.get("webhook-timestamp", "")
+    msg_signature = headers.get("webhook-signature", "")
+
+    if not (msg_id and msg_timestamp and msg_signature):
+        print("MISSING HEADERS")
+        return False
+
+    # Secret is base64-encoded and often prefixed with whsec_
+    secret_clean = secret.replace("whsec_", "")
+    try:
+        key = base64.b64decode(secret_clean)
+    except Exception:
+        key = secret_clean.encode()
+
+    signed_content = f"{msg_id}.{msg_timestamp}.".encode() + body
+    expected = base64.b64encode(
+        hmac.new(key, signed_content, hashlib.sha256).digest()
+    ).decode()
+
+    # Signature header contains space-separated entries like "v1,<base64>"
+    for sig_entry in msg_signature.split(" "):
+        parts = sig_entry.split(",")
+        if len(parts) == 2 and parts[0] == "v1":
+            if hmac.compare_digest(parts[1], expected):
+                return True
+    return False
+
+
 @app.post("/dodo-webhook")
 async def dodo_webhook(request: Request):
     body = await request.body()
-    signature = request.headers.get("X-Dodo-Signature", "")
-    expected = hmac.new(DODO_WEBHOOK_SECRET.encode(), body, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, signature):
+    headers = dict(request.headers)
+
+    if not verify_webhook(body, headers, DODO_WEBHOOK_SECRET):
+        print("SIGNATURE VERIFICATION FAILED")
+        print("HEADERS:", {k: v for k, v in headers.items() if "webhook" in k.lower()})
         raise HTTPException(status_code=400, detail="Invalid signature")
+
     payload = await request.json()
     event = payload.get("type", "")
-    print(f"WEBHOOK RECEIVED: {event}")
-    print(f"PAYLOAD: {payload}")
+    print(f"WEBHOOK OK: {event}")
 
     data = payload.get("data", {})
-    # Try multiple locations for user_id
     user_id = (
         data.get("metadata", {}).get("user_id")
         or data.get("subscription", {}).get("metadata", {}).get("user_id")
         or data.get("payment", {}).get("metadata", {}).get("user_id")
     )
 
-    if event in ("subscription.active", "subscription.activated", "payment.succeeded"):
+    if event in ("subscription.active", "subscription.created", "payment.succeeded"):
         if user_id:
             premium_users.add(user_id)
             print(f"PREMIUM ACTIVATED: {user_id}")
