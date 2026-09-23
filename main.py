@@ -113,3 +113,26 @@ async def razorpay_webhook(request: Request):
             premium_users.add(user_id)
 
     return {"status": "ok"}
+    class PaymentLinkRequest(BaseModel):
+    plan: str
+    user_id: str
+
+
+@app.post("/create-payment-link")
+async def create_payment_link(req: PaymentLinkRequest):
+    if req.plan not in PLANS:
+        raise HTTPException(status_code=400, detail="Invalid plan")
+    try:
+        link = client.payment_link.create({
+            "amount": PLANS[req.plan]["amount"],
+            "currency": "INR",
+            "description": f"Fixmistiq Premium - {req.plan}",
+            "notes": {"user_id": req.user_id, "plan": req.plan},
+            "notify": {"email": False, "sms": False},
+            "reminder_enable": False,
+            "callback_url": "https://fixmistiq.netlify.app",
+            "callback_method": "get",
+        })
+        return {"payment_link": link["short_url"], "link_id": link["id"]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
