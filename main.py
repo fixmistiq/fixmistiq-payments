@@ -41,6 +41,11 @@ class VerifyPaymentRequest(BaseModel):
     user_id: str
 
 
+class PaymentLinkRequest(BaseModel):
+    plan: str
+    user_id: str
+
+
 @app.get("/")
 def root():
     return {"status": "ok", "service": "Fixmistiq Payments"}
@@ -67,6 +72,26 @@ async def create_order(req: CreateOrderRequest):
             "key_id": RAZORPAY_KEY_ID,
             "plan_label": PLANS[req.plan]["label"],
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/create-payment-link")
+async def create_payment_link(req: PaymentLinkRequest):
+    if req.plan not in PLANS:
+        raise HTTPException(status_code=400, detail="Invalid plan")
+    try:
+        link = client.payment_link.create({
+            "amount": PLANS[req.plan]["amount"],
+            "currency": "INR",
+            "description": f"Fixmistiq Premium - {req.plan}",
+            "notes": {"user_id": req.user_id, "plan": req.plan},
+            "notify": {"email": False, "sms": False},
+            "reminder_enable": False,
+            "callback_url": "https://fixmistiq.netlify.app",
+            "callback_method": "get",
+        })
+        return {"payment_link": link["short_url"], "link_id": link["id"]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -106,33 +131,18 @@ async def razorpay_webhook(request: Request):
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
     payload = await request.json()
-    if payload.get("event") == "payment.captured":
-        notes = payload["payload"]["payment"]["entity"].get("notes", {})
-        user_id = notes.get("user_id")
+    event = payload.get("event")
+
+    if event == "payment_link.paid":
+        link_entity = payload["payload"]["payment_link"]["entity"]
+        user_id = link_entity.get("notes", {}).get("user_id")
+        if user_id:
+            premium_users.add(user_id)
+
+    elif event == "payment.captured":
+        payment_entity = payload["payload"]["payment"]["entity"]
+        user_id = payment_entity.get("notes", {}).get("user_id")
         if user_id:
             premium_users.add(user_id)
 
     return {"status": "ok"}
-    class PaymentLinkRequest(BaseModel):
-    plan: str
-    user_id: str
-
-
-@app.post("/create-payment-link")
-async def create_payment_link(req: PaymentLinkRequest):
-    if req.plan not in PLANS:
-        raise HTTPException(status_code=400, detail="Invalid plan")
-    try:
-        link = client.payment_link.create({
-            "amount": PLANS[req.plan]["amount"],
-            "currency": "INR",
-            "description": f"Fixmistiq Premium - {req.plan}",
-            "notes": {"user_id": req.user_id, "plan": req.plan},
-            "notify": {"email": False, "sms": False},
-            "reminder_enable": False,
-            "callback_url": "https://fixmistiq.netlify.app",
-            "callback_method": "get",
-        })
-        return {"payment_link": link["short_url"], "link_id": link["id"]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
