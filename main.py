@@ -55,10 +55,23 @@ async def dodo_webhook(request: Request):
     if not hmac.compare_digest(expected, signature):
         raise HTTPException(status_code=400, detail="Invalid signature")
     payload = await request.json()
-    if payload.get("type") == "subscription.active":
-        user_id = payload.get("data", {}).get("metadata", {}).get("user_id")
+    event = payload.get("type", "")
+    print(f"WEBHOOK RECEIVED: {event}")
+    print(f"PAYLOAD: {payload}")
+
+    data = payload.get("data", {})
+    # Try multiple locations for user_id
+    user_id = (
+        data.get("metadata", {}).get("user_id")
+        or data.get("subscription", {}).get("metadata", {}).get("user_id")
+        or data.get("payment", {}).get("metadata", {}).get("user_id")
+    )
+
+    if event in ("subscription.active", "subscription.activated", "payment.succeeded"):
         if user_id:
             premium_users.add(user_id)
+            print(f"PREMIUM ACTIVATED: {user_id}")
+
     return {"status": "ok"}
 
 
