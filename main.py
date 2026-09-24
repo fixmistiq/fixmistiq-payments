@@ -2,6 +2,7 @@ import os
 import base64
 import hmac
 import hashlib
+from datetime import datetime, timedelta
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -20,7 +21,8 @@ PRODUCTS = {
     "yearly":  "pdt_0NoD6xghw1bAcxmZEGqbm",
 }
 
-premium_users = set()
+# {user_id: expiry_iso_string}
+premium_users = {}
 
 
 class CreateOrderRequest(BaseModel):
@@ -40,7 +42,7 @@ async def create_checkout(req: CreateOrderRequest):
     try:
         session = client.checkout_sessions.create(
             product_cart=[{"product_id": PRODUCTS[req.plan], "quantity": 1}],
-            metadata={"user_id": req.user_id},
+            metadata={"user_id": req.user_id, "plan": req.plan},
             return_url="https://fixmistiq.netlify.app",
         )
         return {"checkout_url": session.checkout_url}
@@ -49,28 +51,20 @@ async def create_checkout(req: CreateOrderRequest):
 
 
 def verify_webhook(body: bytes, headers: dict, secret: str) -> bool:
-    """Verify Dodo (Standard Webhooks) signature."""
     msg_id = headers.get("webhook-id", "")
     msg_timestamp = headers.get("webhook-timestamp", "")
     msg_signature = headers.get("webhook-signature", "")
-
     if not (msg_id and msg_timestamp and msg_signature):
-        print("MISSING HEADERS")
         return False
-
-    # Secret is base64-encoded and often prefixed with whsec_
     secret_clean = secret.replace("whsec_", "")
     try:
         key = base64.b64decode(secret_clean)
     except Exception:
         key = secret_clean.encode()
-
     signed_content = f"{msg_id}.{msg_timestamp}.".encode() + body
     expected = base64.b64encode(
         hmac.new(key, signed_content, hashlib.sha256).digest()
     ).decode()
-
-    # Signature header contains space-separated entries like "v1,<base64>"
     for sig_entry in msg_signature.split(" "):
         parts = sig_entry.split(",")
         if len(parts) == 2 and parts[0] == "v1":
@@ -79,35 +73,55 @@ def verify_webhook(body: bytes, headers: dict, secret: str) -> bool:
     return False
 
 
+def _activate_premium(user_id: str, plan: str = "monthly"):
+    days = 365 if plan == "yearly" else 30
+    expiry = datetime.now() + timedelta(days=days)
+    premium_users[user_id] = expiry.isoformat()
+    return expiry
+
+
 @app.post("/dodo-webhook")
 async def dodo_webhook(request: Request):
     body = await request.body()
     headers = dict(request.headers)
-
     if not verify_webhook(body, headers, DODO_WEBHOOK_SECRET):
-        print("SIGNATURE VERIFICATION FAILED")
-        print("HEADERS:", {k: v for k, v in headers.items() if "webhook" in k.lower()})
         raise HTTPException(status_code=400, detail="Invalid signature")
-
     payload = await request.json()
     event = payload.get("type", "")
-    print(f"WEBHOOK OK: {event}")
-
     data = payload.get("data", {})
-    user_id = (
-        data.get("metadata", {}).get("user_id")
-        or data.get("subscription", {}).get("metadata", {}).get("user_id")
-        or data.get("payment", {}).get("metadata", {}).get("user_id")
-    )
-
+    metadata = data.get("metadata", {}) or {}
+    user_id = metadata.get("user_id")
+    plan = metadata.get("plan", "monthly")
     if event in ("subscription.active", "subscription.created", "payment.succeeded"):
         if user_id:
-            premium_users.add(user_id)
-            print(f"PREMIUM ACTIVATED: {user_id}")
-
+            _activate_premium(user_id, plan)
+            print(f"PREMIUM ACTIVATED: {user_id} (plan={plan})")
     return {"status": "ok"}
 
 
 @app.get("/is-premium/{user_id}")
 def is_premium(user_id: str):
-    return {"user_id": user_id, "premium": user_id in premium_users}
+    expiry_str = premium_users.get(user_id)
+    if not expiry_str:
+        return {"user_id": user_id, "premium": False}
+    try:
+        expiry = datetime.fromisoformat(expiry_str)
+        if datetime.now() >= expiry:
+            premium_users.pop(user_id, None)
+            return {"user_id": user_id, "premium": False, "reason": "expired"}
+        return {"user_id": user_id, "premium": True, "expires_on": expiry.isoformat()}
+    except Exception:
+        return {"user_id": user_id, "premium": False}
+
+
+# ----- TEST ENDPOINTS (remove before going live) -----
+@app.post("/test-activate/{user_id}")
+def test_activate(user_id: str, days: int = 1, plan: str = "monthly"):
+    expiry = _activate_premium(user_id, plan)
+    return {"user_id": user_id, "premium": True, "expires_on": expiry.isoformat()}
+
+
+@app.post("/test-deactivate/{user_id}")
+def test_deactivate(user_id: str):
+    premium_users.pop(user_id, None)
+    return {"user_id": user_id, "premium": False}
