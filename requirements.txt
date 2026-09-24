@@ -2,3 +2,5 @@ fastapi
 uvicorn
 pydantic
 dodopayments
+google-auth
+requests
