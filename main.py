@@ -35,7 +35,6 @@ PRODUCTS = {
 
 _memory_store = {}
 
-
 def _redis_headers():
     return {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
 
@@ -45,11 +44,13 @@ def redis_set(key: str, value: str, ttl: int = None):
         _memory_store[key] = value
         return
     try:
+        safe_key = urllib.parse.quote(key, safe="")
         safe_value = urllib.parse.quote(value, safe="")
-        url = f"{UPSTASH_URL}/set/{key}/{safe_value}"
+        url = f"{UPSTASH_URL}/set/{safe_key}/{safe_value}"
         if ttl:
             url += f"/ex/{ttl}"
-        http_requests.get(url, headers=_redis_headers(), timeout=10)
+        r = http_requests.get(url, headers=_redis_headers(), timeout=10)
+        print(f"REDIS SET {key} -> {r.status_code} {r.text[:100]}")
     except Exception as e:
         print("redis set error:", e)
 
@@ -58,8 +59,11 @@ def redis_get(key: str):
     if not (UPSTASH_URL and UPSTASH_TOKEN):
         return _memory_store.get(key)
     try:
-        r = http_requests.get(f"{UPSTASH_URL}/get/{key}", headers=_redis_headers(), timeout=10)
-        return r.json().get("result")
+        safe_key = urllib.parse.quote(key, safe="")
+        r = http_requests.get(f"{UPSTASH_URL}/get/{safe_key}", headers=_redis_headers(), timeout=10)
+        data = r.json()
+        print(f"REDIS GET {key} -> {data}")
+        return data.get("result")
     except Exception as e:
         print("redis get error:", e)
         return None
@@ -70,7 +74,8 @@ def redis_del(key: str):
         _memory_store.pop(key, None)
         return
     try:
-        http_requests.get(f"{UPSTASH_URL}/del/{key}", headers=_redis_headers(), timeout=10)
+        safe_key = urllib.parse.quote(key, safe="")
+        http_requests.get(f"{UPSTASH_URL}/del/{safe_key}", headers=_redis_headers(), timeout=10)
     except Exception as e:
         print("redis del error:", e)
 
