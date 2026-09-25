@@ -29,8 +29,8 @@ BACKEND_PUBLIC = "https://fixmistiq-payments.onrender.com"
 client = DodoPayments(bearer_token=DODO_API_KEY, environment="test_mode")
 
 PRODUCTS = {
-    "monthly": "pdt_0NoD4EBNQUYi66KottxTZ",
-    "yearly":  "pdt_0NoD6xghw1bAcxmZEGqbm",
+    "monthly": "pdt_0NoMqLzu3vxH2v2LIPFCr",
+    "yearly":  "pdt_0NoMr7xnnZPD9VTakR93n",
 }
 
 _memory_store = {}
