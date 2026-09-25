@@ -26,7 +26,7 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 BACKEND_PUBLIC = "https://fixmistiq-payments.onrender.com"
 
-client = DodoPayments(bearer_token=DODO_API_KEY, environment="test_mode")
+client = DodoPayments(bearer_token=DODO_API_KEY, environment="live_mode")
 
 PRODUCTS = {
     "monthly": "pdt_0NoMqLzu3vxH2v2LIPFCr",
